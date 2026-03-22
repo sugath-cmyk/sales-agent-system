@@ -276,6 +276,83 @@ const runMigration = async (_req: any, res: any) => {
 app.get('/api/migrate', runMigration);
 app.post('/api/migrate', runMigration);
 
+// Seed test data endpoint
+app.get('/api/seed-test', async (_req, res) => {
+  try {
+    const testCompanies = [
+      { name: 'Allbirds', domain: 'allbirds.com', platform: 'shopify', region: 'US' },
+      { name: 'Bombas', domain: 'bombas.com', platform: 'shopify', region: 'US' },
+      { name: 'Brooklinen', domain: 'brooklinen.com', platform: 'shopify', region: 'US' },
+      { name: 'Glossier', domain: 'glossier.com', platform: 'shopify', region: 'US' },
+      { name: 'MVMT', domain: 'mvmt.com', platform: 'shopify', region: 'US' },
+      { name: 'Gymshark', domain: 'gymshark.com', platform: 'shopify', region: 'UK' },
+      { name: 'ColourPop', domain: 'colourpop.com', platform: 'shopify', region: 'US' },
+      { name: 'Fashion Nova', domain: 'fashionnova.com', platform: 'shopify', region: 'US' },
+      { name: 'Kylie Cosmetics', domain: 'kyliecosmetics.com', platform: 'shopify', region: 'US' },
+      { name: 'Chubbies', domain: 'chubbiesshorts.com', platform: 'shopify', region: 'US' },
+    ];
+
+    // Insert companies
+    for (const company of testCompanies) {
+      await query(`
+        INSERT INTO companies (name, domain, platform, region, has_shopping_assistant, monthly_traffic)
+        VALUES ($1, $2, $3, $4, false, $5)
+        ON CONFLICT (domain) DO NOTHING
+      `, [company.name, company.domain, company.platform, company.region, Math.floor(Math.random() * 500000) + 10000]);
+    }
+
+    // Get inserted companies
+    const companies = await query(`SELECT id, name, domain FROM companies LIMIT 10`);
+
+    // Create contacts and leads for each company
+    for (const company of companies.rows) {
+      // Create a contact
+      const contactResult = await query(`
+        INSERT INTO contacts (company_id, first_name, last_name, email, title, is_decision_maker)
+        VALUES ($1, $2, $3, $4, $5, true)
+        ON CONFLICT (email) DO UPDATE SET first_name = EXCLUDED.first_name
+        RETURNING id
+      `, [
+        company.id,
+        'Founder',
+        company.name.split(' ')[0],
+        `hello@${company.domain}`,
+        'Founder & CEO'
+      ]);
+
+      // Create a lead
+      await query(`
+        INSERT INTO leads (contact_id, company_id, status, source, icp_score, intent_score)
+        VALUES ($1, $2, 'new', 'seed_data', $3, $4)
+        ON CONFLICT DO NOTHING
+      `, [
+        contactResult.rows[0]?.id,
+        company.id,
+        Math.floor(Math.random() * 30) + 50,
+        Math.floor(Math.random() * 20) + 10
+      ]);
+    }
+
+    // Get summary
+    const summary = await query(`
+      SELECT
+        (SELECT COUNT(*) FROM companies) as companies,
+        (SELECT COUNT(*) FROM contacts) as contacts,
+        (SELECT COUNT(*) FROM leads) as leads
+    `);
+
+    res.json({
+      success: true,
+      message: 'Test data seeded!',
+      data: summary.rows[0],
+      companies: companies.rows.map(c => c.name)
+    });
+  } catch (error: any) {
+    console.error('Seed error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Queue stats
 app.get('/api/queues', async (_req, res) => {
   try {
