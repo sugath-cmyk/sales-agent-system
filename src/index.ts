@@ -660,9 +660,22 @@ app.post('/api/webhooks/linkedin', async (req, res) => {
 
 // Get daily goals and progress
 app.get('/api/daily-goals', async (_req, res) => {
-  try {
-    const today = new Date().toISOString().split('T')[0];
+  const today = new Date().toISOString().split('T')[0];
+  const dailyGoals = {
+    leads_discovered: 50,
+    leads_contacted: 30,
+    leads_engaged: 10,
+    meetings_booked: 3,
+  };
 
+  const defaultProgress = {
+    leads_discovered: { current: 0, goal: 50, percentage: 0 },
+    leads_contacted: { current: 0, goal: 30, percentage: 0 },
+    leads_engaged: { current: 0, goal: 10, percentage: 0 },
+    meetings_booked: { current: 0, goal: 3, percentage: 0 },
+  };
+
+  try {
     // Get today's lead generation stats
     const leadStats = await query(`
       SELECT
@@ -685,15 +698,7 @@ app.get('/api/daily-goals', async (_req, res) => {
       GROUP BY agent_type
     `);
 
-    // Daily goals (configurable)
-    const dailyGoals = {
-      leads_discovered: 50,
-      leads_contacted: 30,
-      leads_engaged: 10,
-      meetings_booked: 3,
-    };
-
-    const stats = leadStats.rows[0];
+    const stats = leadStats.rows[0] || { leads_today: 0, meetings_today: 0, engaged_today: 0, contacted_today: 0 };
     const progress = {
       leads_discovered: {
         current: parseInt(stats.leads_today) || 0,
@@ -721,31 +726,47 @@ app.get('/api/daily-goals', async (_req, res) => {
       date: today,
       calendlyLink: CALENDLY_LINK,
       progress,
-      agentActivity: agentActivity.rows.map(a => ({
+      agentActivity: (agentActivity.rows || []).map(a => ({
         ...a,
         agent_name: getAgentDisplayName(a.agent_type),
       })),
     });
   } catch (error) {
-    res.status(500).json({ error: 'Failed to get daily goals' });
+    console.error('Daily goals error:', error);
+    res.json({
+      date: today,
+      calendlyLink: CALENDLY_LINK,
+      progress: defaultProgress,
+      agentActivity: [],
+    });
   }
 });
 
 // Get real-time agent status
 app.get('/api/agents/status', async (_req, res) => {
   try {
-    const queueStats = await getQueueStats();
+    let queueStats = {};
+    try {
+      queueStats = await getQueueStats();
+    } catch (e) {
+      console.log('Queue stats unavailable');
+    }
 
     // Get recent activity for each agent
-    const recentActivity = await query(`
-      SELECT
-        agent_type,
-        MAX(created_at) as last_activity,
-        COUNT(*) FILTER (WHERE status = 'processing') as active_tasks
-      FROM agent_tasks
-      WHERE created_at > NOW() - INTERVAL '1 hour'
-      GROUP BY agent_type
-    `);
+    let recentActivity = { rows: [] };
+    try {
+      recentActivity = await query(`
+        SELECT
+          agent_type,
+          MAX(created_at) as last_activity,
+          COUNT(*) FILTER (WHERE status = 'processing') as active_tasks
+        FROM agent_tasks
+        WHERE created_at > NOW() - INTERVAL '1 hour'
+        GROUP BY agent_type
+      `);
+    } catch (e) {
+      console.log('Recent activity query failed');
+    }
 
     const agents = Object.entries(AGENT_PERSONAS).map(([id, persona]) => {
       const activity = recentActivity.rows.find(a => a.agent_type === id);
