@@ -1,3 +1,21 @@
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+# Copy package files
+COPY package*.json ./
+
+# Install all dependencies (including dev)
+RUN npm ci
+
+# Copy source files
+COPY src/ ./src/
+COPY tsconfig.json ./
+
+# Build the application
+RUN npm run build
+
+# Production stage
 FROM node:20-alpine
 
 # Install dependencies for Puppeteer
@@ -19,11 +37,11 @@ WORKDIR /app
 # Copy package files
 COPY package*.json ./
 
-# Install dependencies
+# Install production dependencies only
 RUN npm ci --only=production
 
-# Copy built files
-COPY dist/ ./dist/
+# Copy built files from builder stage
+COPY --from=builder /app/dist ./dist/
 
 # Run as non-root user
 RUN addgroup -g 1001 -S nodejs
