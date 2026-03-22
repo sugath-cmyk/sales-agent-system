@@ -363,6 +363,27 @@ app.get('/api/queues', async (_req, res) => {
   }
 });
 
+// Get failed jobs with error details
+app.get('/api/queues/failed', async (_req, res) => {
+  try {
+    const failedJobs: Record<string, unknown[]> = {};
+    for (const [name, queue] of Object.entries(queues)) {
+      const jobs = await queue.getFailed(0, 10);
+      failedJobs[name] = jobs.map((job: any) => ({
+        id: job.id,
+        name: job.name,
+        data: job.data,
+        failedReason: job.failedReason,
+        attemptsMade: job.attemptsMade,
+        timestamp: job.timestamp,
+      }));
+    }
+    res.json(failedJobs);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || 'Failed to get failed jobs' });
+  }
+});
+
 // =====================
 // Lead Research API
 // =====================
