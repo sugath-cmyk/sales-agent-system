@@ -45,16 +45,36 @@ export default function App() {
   const fetchData = async () => {
     try {
       const [overviewRes, teamRes] = await Promise.all([
-        fetch(`${API_URL}/dashboard/overview`),
-        fetch(`${API_URL}/team`),
+        fetch(`${API_URL}/dashboard/overview`).catch(() => null),
+        fetch(`${API_URL}/team`).catch(() => null),
       ]);
 
-      setOverview(await overviewRes.json());
-      setTeam(await teamRes.json());
+      if (overviewRes?.ok) {
+        const data = await overviewRes.json();
+        setOverview(data);
+      } else {
+        // Set default values if API fails
+        setOverview({
+          pipeline: { total_leads: 0, new: 0, researched: 0, contacted: 0, engaged: 0, meeting_booked: 0 },
+          today: { new_leads: 0, emails_sent: 0, linkedin_requests: 0, content_created: 0 },
+          funnel: { hot_leads: 0, warm_leads: 0, cold_leads: 0, unscored: 0 },
+        });
+      }
+
+      if (teamRes?.ok) {
+        setTeam(await teamRes.json());
+      }
+
       setLastRefresh(new Date());
       setLoading(false);
     } catch (error) {
       console.error('Failed to fetch data:', error);
+      // Set defaults on error
+      setOverview({
+        pipeline: { total_leads: 0, new: 0, researched: 0, contacted: 0, engaged: 0, meeting_booked: 0 },
+        today: { new_leads: 0, emails_sent: 0, linkedin_requests: 0, content_created: 0 },
+        funnel: { hot_leads: 0, warm_leads: 0, cold_leads: 0, unscored: 0 },
+      });
       setLoading(false);
     }
   };

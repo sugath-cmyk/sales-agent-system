@@ -9,6 +9,32 @@ const router = Router();
 // =====================
 
 router.get('/overview', async (_req, res) => {
+  // Default values when database isn't ready
+  const defaultPipeline = {
+    total_leads: 0,
+    new: 0,
+    researched: 0,
+    contacted: 0,
+    engaged: 0,
+    meeting_booked: 0,
+    closed_won: 0,
+    closed_lost: 0,
+  };
+
+  const defaultToday = {
+    new_leads: 0,
+    emails_sent: 0,
+    linkedin_requests: 0,
+    content_created: 0,
+  };
+
+  const defaultFunnel = {
+    hot_leads: 0,
+    warm_leads: 0,
+    cold_leads: 0,
+    unscored: 0,
+  };
+
   try {
     // Pipeline summary
     const pipeline = await query(`
@@ -45,12 +71,18 @@ router.get('/overview', async (_req, res) => {
     `);
 
     res.json({
-      pipeline: pipeline.rows[0],
-      today: today.rows[0],
-      funnel: funnel.rows[0],
+      pipeline: pipeline.rows[0] || defaultPipeline,
+      today: today.rows[0] || defaultToday,
+      funnel: funnel.rows[0] || defaultFunnel,
     });
   } catch (error) {
-    res.status(500).json({ error: 'Failed to get overview' });
+    // Return default values if database isn't ready
+    console.log('Database not ready, returning defaults:', error);
+    res.json({
+      pipeline: defaultPipeline,
+      today: defaultToday,
+      funnel: defaultFunnel,
+    });
   }
 });
 
