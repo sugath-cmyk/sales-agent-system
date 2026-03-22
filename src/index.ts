@@ -67,6 +67,210 @@ app.get('/health', async (_req, res) => {
   });
 });
 
+// Database migration endpoint (run once to set up tables)
+app.post('/api/migrate', async (_req, res) => {
+  try {
+    // Core tables creation
+    await query(`CREATE EXTENSION IF NOT EXISTS "uuid-ossp"`);
+
+    await query(`
+      CREATE TABLE IF NOT EXISTS companies (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        name VARCHAR(255) NOT NULL,
+        domain VARCHAR(255) UNIQUE NOT NULL,
+        industry VARCHAR(100),
+        platform VARCHAR(50),
+        employee_count INTEGER,
+        estimated_revenue VARCHAR(50),
+        region VARCHAR(10),
+        has_shopping_assistant BOOLEAN DEFAULT false,
+        detected_assistants TEXT[],
+        tech_stack JSONB DEFAULT '{}',
+        monthly_traffic INTEGER,
+        traffic_source VARCHAR(50),
+        enriched_at TIMESTAMP,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+
+    await query(`
+      CREATE TABLE IF NOT EXISTS contacts (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        company_id UUID REFERENCES companies(id) ON DELETE CASCADE,
+        first_name VARCHAR(100),
+        last_name VARCHAR(100),
+        email VARCHAR(255) UNIQUE,
+        phone VARCHAR(50),
+        linkedin_url VARCHAR(500),
+        title VARCHAR(255),
+        department VARCHAR(100),
+        is_decision_maker BOOLEAN DEFAULT false,
+        enrichment_source VARCHAR(50),
+        enriched_at TIMESTAMP,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+
+    await query(`
+      CREATE TABLE IF NOT EXISTS leads (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        contact_id UUID REFERENCES contacts(id) ON DELETE CASCADE,
+        company_id UUID REFERENCES companies(id) ON DELETE CASCADE,
+        icp_score INTEGER DEFAULT 0,
+        intent_score INTEGER DEFAULT 0,
+        total_score INTEGER DEFAULT 0,
+        score_breakdown JSONB DEFAULT '{}',
+        status VARCHAR(50) DEFAULT 'new',
+        stage_changed_at TIMESTAMP DEFAULT NOW(),
+        assigned_agent VARCHAR(50),
+        source VARCHAR(100),
+        source_details JSONB DEFAULT '{}',
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+
+    await query(`
+      CREATE TABLE IF NOT EXISTS email_sequences (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        name VARCHAR(255) NOT NULL,
+        description TEXT,
+        steps JSONB NOT NULL,
+        is_active BOOLEAN DEFAULT true,
+        created_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+
+    await query(`
+      CREATE TABLE IF NOT EXISTS email_templates (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        template_id VARCHAR(100) UNIQUE NOT NULL,
+        subject VARCHAR(500) NOT NULL,
+        body TEXT NOT NULL,
+        variables TEXT[],
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+
+    await query(`
+      CREATE TABLE IF NOT EXISTS email_campaigns (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        lead_id UUID REFERENCES leads(id) ON DELETE CASCADE,
+        sequence_id UUID REFERENCES email_sequences(id),
+        status VARCHAR(50) DEFAULT 'active',
+        current_step INTEGER DEFAULT 0,
+        next_send_at TIMESTAMP,
+        emails_sent INTEGER DEFAULT 0,
+        emails_opened INTEGER DEFAULT 0,
+        emails_clicked INTEGER DEFAULT 0,
+        emails_replied INTEGER DEFAULT 0,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+
+    await query(`
+      CREATE TABLE IF NOT EXISTS email_logs (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        campaign_id UUID REFERENCES email_campaigns(id) ON DELETE CASCADE,
+        lead_id UUID REFERENCES leads(id) ON DELETE CASCADE,
+        template_id VARCHAR(100),
+        subject VARCHAR(500),
+        body TEXT,
+        to_email VARCHAR(255) NOT NULL,
+        status VARCHAR(50) DEFAULT 'pending',
+        sent_at TIMESTAMP,
+        opened_at TIMESTAMP,
+        clicked_at TIMESTAMP,
+        replied_at TIMESTAMP,
+        provider_message_id VARCHAR(255),
+        provider_response JSONB,
+        created_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+
+    await query(`
+      CREATE TABLE IF NOT EXISTS linkedin_campaigns (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        lead_id UUID REFERENCES leads(id) ON DELETE CASCADE,
+        connection_status VARCHAR(50) DEFAULT 'not_connected',
+        connection_sent_at TIMESTAMP,
+        connected_at TIMESTAMP,
+        dm_sequence_step INTEGER DEFAULT 0,
+        last_message_sent_at TIMESTAMP,
+        last_message_received_at TIMESTAMP,
+        messages_sent INTEGER DEFAULT 0,
+        messages_received INTEGER DEFAULT 0,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+
+    await query(`
+      CREATE TABLE IF NOT EXISTS content_pieces (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        type VARCHAR(50) NOT NULL,
+        title VARCHAR(500) NOT NULL,
+        content TEXT NOT NULL,
+        target_industry VARCHAR(100),
+        target_persona VARCHAR(100),
+        seo_keywords TEXT[],
+        meta_description VARCHAR(500),
+        status VARCHAR(50) DEFAULT 'draft',
+        published_at TIMESTAMP,
+        publish_url VARCHAR(500),
+        views INTEGER DEFAULT 0,
+        engagement_score DECIMAL(5,2),
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+
+    await query(`
+      CREATE TABLE IF NOT EXISTS agent_tasks (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        agent_type VARCHAR(50) NOT NULL,
+        task_type VARCHAR(100) NOT NULL,
+        payload JSONB NOT NULL,
+        result JSONB,
+        error TEXT,
+        status VARCHAR(50) DEFAULT 'pending',
+        priority INTEGER DEFAULT 5,
+        scheduled_for TIMESTAMP DEFAULT NOW(),
+        started_at TIMESTAMP,
+        completed_at TIMESTAMP,
+        attempts INTEGER DEFAULT 0,
+        max_attempts INTEGER DEFAULT 3,
+        created_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+
+    await query(`
+      CREATE TABLE IF NOT EXISTS analytics_events (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        event_type VARCHAR(100) NOT NULL,
+        agent_type VARCHAR(50),
+        lead_id UUID REFERENCES leads(id) ON DELETE SET NULL,
+        campaign_id UUID,
+        properties JSONB DEFAULT '{}',
+        created_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+
+    res.json({
+      success: true,
+      message: 'Database tables created successfully!',
+      tables: ['companies', 'contacts', 'leads', 'email_sequences', 'email_templates', 'email_campaigns', 'email_logs', 'linkedin_campaigns', 'content_pieces', 'agent_tasks', 'analytics_events']
+    });
+  } catch (error: any) {
+    console.error('Migration error:', error);
+    res.status(500).json({ error: error.message || 'Migration failed' });
+  }
+});
+
 // Queue stats
 app.get('/api/queues', async (_req, res) => {
   try {
