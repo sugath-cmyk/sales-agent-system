@@ -23,12 +23,15 @@ const connection = new IORedis(config.REDIS_URL, {
   maxRetriesPerRequest: null,
 });
 
-// Worker options
+// Worker options with extended timeouts for Claude API calls
 const workerOptions = {
   connection,
-  concurrency: 5,
+  concurrency: 3, // Reduced concurrency to avoid rate limits
+  lockDuration: 300000, // 5 minutes lock
+  stalledInterval: 60000, // Check for stalled jobs every 60s
+  lockRenewTime: 30000, // Renew lock every 30s
   limiter: {
-    max: 10,
+    max: 5,
     duration: 1000,
   },
 };
@@ -40,17 +43,38 @@ async function processAgentJob(
 ): Promise<unknown> {
   console.log(`Processing job ${job.id} - ${job.data.taskType}`);
 
-  const result = await agent.processTask({
-    taskId: job.data.taskId,
-    payload: job.data.payload,
-    retryCount: job.attemptsMade,
-  });
+  // Update progress to keep job alive
+  await job.updateProgress(10);
 
-  if (!result.success) {
-    throw new Error(result.error || 'Task failed');
+  // Set up periodic progress updates to prevent stalling
+  const progressInterval = setInterval(async () => {
+    try {
+      const currentProgress = (job.progress as number) || 10;
+      await job.updateProgress(Math.min(currentProgress + 10, 90));
+    } catch (e) {
+      // Job may have completed, ignore
+    }
+  }, 15000); // Update every 15 seconds
+
+  try {
+    const result = await agent.processTask({
+      taskId: job.data.taskId,
+      payload: job.data.payload,
+      retryCount: job.attemptsMade,
+    });
+
+    clearInterval(progressInterval);
+    await job.updateProgress(100);
+
+    if (!result.success) {
+      throw new Error(result.error || 'Task failed');
+    }
+
+    return result.data;
+  } catch (error) {
+    clearInterval(progressInterval);
+    throw error;
   }
-
-  return result.data;
 }
 
 // Create workers for each queue
