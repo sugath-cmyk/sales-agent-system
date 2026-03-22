@@ -68,7 +68,8 @@ app.get('/health', async (_req, res) => {
 });
 
 // Database migration endpoint (run once to set up tables)
-app.post('/api/migrate', async (_req, res) => {
+// Support both GET and POST for easy browser access
+const runMigration = async (_req: any, res: any) => {
   try {
     // Core tables creation
     await query(`CREATE EXTENSION IF NOT EXISTS "uuid-ossp"`);
@@ -269,7 +270,11 @@ app.post('/api/migrate', async (_req, res) => {
     console.error('Migration error:', error);
     res.status(500).json({ error: error.message || 'Migration failed' });
   }
-});
+};
+
+// Register migration route for both GET and POST
+app.get('/api/migrate', runMigration);
+app.post('/api/migrate', runMigration);
 
 // Queue stats
 app.get('/api/queues', async (_req, res) => {
