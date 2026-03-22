@@ -353,6 +353,97 @@ app.get('/api/seed-test', async (_req, res) => {
   }
 });
 
+// Check API configuration status
+app.get('/api/config/status', async (_req, res) => {
+  res.json({
+    apollo: !!config.APOLLO_API_KEY,
+    clearbit: !!config.CLEARBIT_API_KEY,
+    builtwith: !!config.BUILTWITH_API_KEY,
+    resend: !!config.RESEND_API_KEY,
+    message: config.APOLLO_API_KEY
+      ? 'Apollo API configured - real enrichment available'
+      : 'Apollo API NOT configured - add APOLLO_API_KEY env var for real founder emails'
+  });
+});
+
+// Clear fake/test data
+app.delete('/api/data/clear-test', async (_req, res) => {
+  try {
+    // Delete only seed_data leads, contacts, and companies
+    await query(`DELETE FROM leads WHERE source = 'seed_data'`);
+
+    // Delete contacts with fake hello@ emails
+    await query(`DELETE FROM contacts WHERE email LIKE 'hello@%'`);
+
+    // Delete companies that have no remaining leads
+    await query(`
+      DELETE FROM companies c
+      WHERE NOT EXISTS (
+        SELECT 1 FROM leads l WHERE l.company_id = c.id
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM contacts ct WHERE ct.company_id = c.id
+      )
+    `);
+
+    const remaining = await query(`
+      SELECT
+        (SELECT COUNT(*) FROM companies) as companies,
+        (SELECT COUNT(*) FROM contacts) as contacts,
+        (SELECT COUNT(*) FROM leads) as leads
+    `);
+
+    res.json({
+      success: true,
+      message: 'Fake test data cleared',
+      remaining: remaining.rows[0]
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Re-enrich companies with real Apollo data
+app.post('/api/enrich/companies', async (req, res) => {
+  if (!config.APOLLO_API_KEY) {
+    return res.status(400).json({
+      error: 'Apollo API key not configured',
+      help: 'Add APOLLO_API_KEY to your environment variables on Render'
+    });
+  }
+
+  const { domains } = req.body;
+
+  if (!domains || !Array.isArray(domains) || domains.length === 0) {
+    return res.status(400).json({ error: 'Provide array of domains to enrich' });
+  }
+
+  try {
+    const results = [];
+
+    for (const domain of domains.slice(0, 10)) { // Limit to 10 at a time
+      // Queue enrichment job for each domain
+      const job = await addJob('leadResearch', {
+        taskId: `enrich_${Date.now()}_${domain.replace(/\./g, '_')}`,
+        taskType: 'research_domain',
+        payload: { domain },
+        priority: 8,
+        createdAt: new Date().toISOString(),
+      });
+
+      results.push({ domain, jobId: job.id, status: 'queued' });
+    }
+
+    res.json({
+      success: true,
+      message: `Queued ${results.length} domains for enrichment with Apollo`,
+      jobs: results
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Queue stats
 app.get('/api/queues', async (_req, res) => {
   try {
