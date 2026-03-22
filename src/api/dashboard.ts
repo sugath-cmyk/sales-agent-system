@@ -619,6 +619,141 @@ router.get('/agents/adman', async (req, res) => {
 });
 
 // =====================
+// RAW DATA VIEWS
+// =====================
+
+// All companies
+router.get('/data/companies', async (req, res) => {
+  const { limit = 100, offset = 0 } = req.query;
+  try {
+    const companies = await query(`
+      SELECT id, name, domain, platform, region, has_shopping_assistant,
+             monthly_traffic, enriched_at, created_at, updated_at
+      FROM companies
+      ORDER BY created_at DESC
+      LIMIT $1 OFFSET $2
+    `, [limit, offset]);
+
+    const count = await query(`SELECT COUNT(*) as total FROM companies`);
+
+    res.json({
+      data: companies.rows,
+      total: parseInt(count.rows[0].total),
+      limit: parseInt(limit as string),
+      offset: parseInt(offset as string)
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to get companies' });
+  }
+});
+
+// All leads with details
+router.get('/data/leads', async (req, res) => {
+  const { limit = 100, offset = 0, status } = req.query;
+  try {
+    let whereClause = '';
+    const params: unknown[] = [limit, offset];
+
+    if (status) {
+      whereClause = 'WHERE l.status = $3';
+      params.push(status);
+    }
+
+    const leads = await query(`
+      SELECT l.id, l.status, l.source, l.icp_score, l.intent_score, l.total_score,
+             l.created_at, l.stage_changed_at,
+             c.email, c.first_name, c.last_name, c.title,
+             co.name as company_name, co.domain, co.platform
+      FROM leads l
+      JOIN contacts c ON l.contact_id = c.id
+      JOIN companies co ON l.company_id = co.id
+      ${whereClause}
+      ORDER BY l.created_at DESC
+      LIMIT $1 OFFSET $2
+    `, params);
+
+    const count = await query(`SELECT COUNT(*) as total FROM leads`);
+
+    res.json({
+      data: leads.rows,
+      total: parseInt(count.rows[0].total),
+      limit: parseInt(limit as string),
+      offset: parseInt(offset as string)
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to get leads' });
+  }
+});
+
+// All agent tasks
+router.get('/data/tasks', async (req, res) => {
+  const { limit = 100, offset = 0, agent, status } = req.query;
+  try {
+    let whereClause = 'WHERE 1=1';
+    const params: unknown[] = [limit, offset];
+    let paramIndex = 3;
+
+    if (agent) {
+      whereClause += ` AND agent_type = $${paramIndex}`;
+      params.push(agent);
+      paramIndex++;
+    }
+    if (status) {
+      whereClause += ` AND status = $${paramIndex}`;
+      params.push(status);
+    }
+
+    const tasks = await query(`
+      SELECT id, agent_type, task_type, payload, result, error, status,
+             priority, scheduled_for, started_at, completed_at, attempts, created_at
+      FROM agent_tasks
+      ${whereClause}
+      ORDER BY created_at DESC
+      LIMIT $1 OFFSET $2
+    `, params);
+
+    const count = await query(`SELECT COUNT(*) as total FROM agent_tasks`);
+
+    res.json({
+      data: tasks.rows,
+      total: parseInt(count.rows[0].total),
+      limit: parseInt(limit as string),
+      offset: parseInt(offset as string)
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to get tasks' });
+  }
+});
+
+// Email logs
+router.get('/data/emails', async (req, res) => {
+  const { limit = 100, offset = 0 } = req.query;
+  try {
+    const emails = await query(`
+      SELECT el.id, el.lead_id, el.subject, el.status, el.sent_at, el.opened_at, el.clicked_at,
+             c.email, c.first_name, co.name as company_name
+      FROM email_logs el
+      LEFT JOIN leads l ON el.lead_id = l.id
+      LEFT JOIN contacts c ON l.contact_id = c.id
+      LEFT JOIN companies co ON l.company_id = co.id
+      ORDER BY el.created_at DESC
+      LIMIT $1 OFFSET $2
+    `, [limit, offset]);
+
+    const count = await query(`SELECT COUNT(*) as total FROM email_logs`);
+
+    res.json({
+      data: emails.rows,
+      total: parseInt(count.rows[0].total),
+      limit: parseInt(limit as string),
+      offset: parseInt(offset as string)
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to get emails' });
+  }
+});
+
+// =====================
 // REAL-TIME ACTIVITY FEED
 // =====================
 

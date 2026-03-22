@@ -131,7 +131,18 @@ export abstract class BaseAgent {
     );
   }
 
+  // Check if taskId is a valid UUID
+  private isValidUUID(id: string): boolean {
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    return uuidRegex.test(id);
+  }
+
   private async logTaskStart(context: TaskContext): Promise<void> {
+    // Only log to DB if taskId is a valid UUID, otherwise skip
+    if (!this.isValidUUID(context.taskId)) {
+      console.log(`[${this.config.name}] Starting task: ${context.taskId}`);
+      return;
+    }
     await query(
       `UPDATE agent_tasks SET status = 'processing', started_at = NOW(), attempts = attempts + 1
        WHERE id = $1`,
@@ -143,6 +154,11 @@ export abstract class BaseAgent {
     context: TaskContext,
     result: Record<string, unknown>
   ): Promise<void> {
+    // Only log to DB if taskId is a valid UUID, otherwise skip
+    if (!this.isValidUUID(context.taskId)) {
+      console.log(`[${this.config.name}] Completed task: ${context.taskId}`);
+      return;
+    }
     await query(
       `UPDATE agent_tasks SET status = 'completed', completed_at = NOW(), result = $2
        WHERE id = $1`,
@@ -151,6 +167,11 @@ export abstract class BaseAgent {
   }
 
   private async logTaskFailed(context: TaskContext, error: string): Promise<void> {
+    // Only log to DB if taskId is a valid UUID, otherwise skip
+    if (!this.isValidUUID(context.taskId)) {
+      console.log(`[${this.config.name}] Failed task: ${context.taskId} - ${error}`);
+      return;
+    }
     await query(
       `UPDATE agent_tasks SET status = 'failed', error = $2
        WHERE id = $1`,

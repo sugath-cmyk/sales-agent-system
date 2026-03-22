@@ -7,7 +7,8 @@ import { AgentStatusGrid } from './components/AgentStatus';
 import { WeeklyTrend } from './components/WeeklyTrend';
 import { TeamOverview } from './components/TeamOverview';
 import { AgentCard } from './components/AgentCard';
-import { RefreshCw, Calendar, Users, Target, TrendingUp, Award } from 'lucide-react';
+import { DataView } from './components/DataView';
+import { RefreshCw, Calendar, Users, Target, TrendingUp, Award, Database } from 'lucide-react';
 import { API_BASE } from './config/api';
 
 const API_URL = `${API_BASE}/api`;
@@ -26,7 +27,7 @@ interface Agent {
   emoji: string;
 }
 
-type Tab = 'overview' | 'agents' | 'pipeline' | 'evaluations';
+type Tab = 'overview' | 'agents' | 'pipeline' | 'evaluations' | 'data';
 
 export default function App() {
   const [overview, setOverview] = useState<Overview | null>(null);
@@ -96,6 +97,7 @@ export default function App() {
     { id: 'agents', label: 'Agents', icon: Users },
     { id: 'pipeline', label: 'Pipeline', icon: TrendingUp },
     { id: 'evaluations', label: 'Evaluations', icon: Award },
+    { id: 'data', label: 'Data', icon: Database },
   ] as const;
 
   return (
@@ -340,6 +342,19 @@ export default function App() {
                   </div>
                 ))}
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* Data Tab */}
+        {activeTab === 'data' && (
+          <div className="space-y-6">
+            <div className="bg-gray-800 rounded-lg p-6">
+              <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                <span className="text-xl">📊</span>
+                Raw Data Explorer
+              </h2>
+              <DataView />
             </div>
           </div>
         )}
