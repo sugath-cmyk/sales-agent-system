@@ -171,7 +171,7 @@ export const AUDIENCE_SEGMENTS = {
 // =====================
 
 export const AD_TEMPLATES = {
-  // Awareness campaigns - introduce Varyse AI
+  // Awareness campaigns - introduce Buffy AI
   awareness: [
     {
       headline: 'Your Product Page Is Losing Sales',
@@ -179,7 +179,7 @@ export const AD_TEMPLATES = {
 
 60-70% of shoppers leave without buying because they can't find answers about sizing, ingredients, or compatibility.
 
-Varyse AI changes that. ⚡
+Buffy AI changes that. ⚡
 
 Our AI answers every product question instantly — 24/7, on every page.
 
@@ -195,7 +195,7 @@ Nothing connects the two.
 
 Until now.
 
-Varyse AI turns every product page into a two-way conversation — so shoppers get answers, build confidence, and buy.
+Buffy AI turns every product page into a two-way conversation — so shoppers get answers, build confidence, and buy.
 
 +23% conversion rate for D2C brands 📈`,
       callToAction: 'Book Demo',
@@ -207,7 +207,7 @@ Varyse AI turns every product page into a two-way conversation — so shoppers g
   consideration: [
     {
       headline: '+23% Conversion Rate. Real Results.',
-      primaryText: `Here's what happened when D2C brands added Varyse AI:
+      primaryText: `Here's what happened when D2C brands added Buffy AI:
 
 ✅ Conversion rate: +23%
 ✅ Average order value: +22%
@@ -227,7 +227,7 @@ Your customer thinks: "Will this break me out in humidity?"
 
 That gap = lost sales.
 
-Varyse AI answers every question instantly:
+Buffy AI answers every question instantly:
 • Ingredient compatibility
 • Skin type matching
 • Routine recommendations
@@ -242,14 +242,14 @@ Start free. Scale when you're ready.`,
   // Conversion campaigns - direct CTA to book demo
   conversion: [
     {
-      headline: 'See Varyse on YOUR Products — Free',
+      headline: 'See Buffy AI on YOUR Products — Free',
       primaryText: `30-minute personalized demo:
 
 ✅ See the AI answer questions about YOUR products
 ✅ Get a custom conversion estimate
 ✅ No commitment required
 
-D2C brands using Varyse AI see 23% higher conversions.
+D2C brands using Buffy AI see 23% higher conversions.
 
 Book your free demo now 👇`,
       callToAction: 'Book Demo',
@@ -261,7 +261,7 @@ Book your free demo now 👇`,
 No credit card required.
 100 free conversations to try it.
 
-Your visitors have questions. Varyse AI has answers.
+Your visitors have questions. Buffy AI has answers.
 
 Stop losing sales. Start converting. ⚡`,
       callToAction: 'Get Started Free',

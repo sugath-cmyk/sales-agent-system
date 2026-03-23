@@ -25,7 +25,7 @@ app.use('/api/dashboard', dashboardRouter);
 // Root route - API welcome page
 app.get('/', (_req, res) => {
   res.json({
-    name: 'Varyse Sales Agent System',
+    name: 'Buffy AI Sales Agent System',
     version: '1.0.0',
     description: 'Autonomous AI Sales Agents for Shopify Merchant Outreach',
     goal: CALENDLY_LINK,

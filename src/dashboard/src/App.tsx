@@ -111,7 +111,7 @@ export default function App() {
             <div>
               <h1 className="text-2xl font-bold flex items-center gap-2">
                 <span className="text-3xl">🎯</span>
-                Varyse Sales Command Center
+                Buffy AI Sales Command Center
               </h1>
               <p className="text-gray-400 text-sm">Autonomous Shopify Merchant Outreach</p>
             </div>
