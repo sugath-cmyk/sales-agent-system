@@ -1,7 +1,7 @@
 import { BaseAgent, TaskContext, AgentConfig } from '../../core/agent-base.js';
 import { Tool } from '../../core/claude-client.js';
 import { query } from '../../db/client.js';
-import { scanStore, StoreAnalysis } from './store-scanner.js';
+import { scanStoreLite, StoreAnalysis } from './store-scanner.js';
 import { detectPlatform, PlatformInfo } from './tech-detector.js';
 import { enrichCompany, enrichContact, EnrichmentData } from './enricher.js';
 import { discoverShopifyStores, getAvailableCategories } from '../../services/store-discovery.js';
@@ -285,7 +285,8 @@ export class LeadResearchAgent extends BaseAgent {
 
   private async handleScanStore(domain: string): Promise<string> {
     try {
-      const analysis: StoreAnalysis = await scanStore(domain);
+      // Use lightweight scanner (fetch-based, no Puppeteer) for speed
+      const analysis: StoreAnalysis = await scanStoreLite(domain);
       return JSON.stringify(analysis, null, 2);
     } catch (error) {
       return `Error scanning store: ${error instanceof Error ? error.message : 'Unknown error'}`;
