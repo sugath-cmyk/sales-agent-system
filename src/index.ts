@@ -13,7 +13,7 @@ import { linkedInAgent } from './agents/linkedin/index.js';
 import { contentAgent } from './agents/content/index.js';
 import { orchestratorAgent } from './agents/orchestrator/index.js';
 import { leaderAgent } from './agents/leader/index.js';
-import { AGENT_PERSONAS, getAgentDisplayName, CALENDLY_LINK } from './config/agents.js';
+import { AGENT_PERSONAS, getAgentDisplayName, CALENDLY_LINK, estimateTriggerCost, COST_CONSTANTS } from './config/agents.js';
 
 const app = express();
 app.use(cors());
@@ -442,6 +442,201 @@ app.post('/api/enrich/companies', async (req, res) => {
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
+});
+
+// =====================
+// Agent Trigger API (Manual Control with Cost Preview)
+// =====================
+
+// Get all agents with their KRAs and triggers
+app.get('/api/agents/full', async (_req, res) => {
+  const agents = Object.values(AGENT_PERSONAS).map(agent => ({
+    id: agent.id,
+    name: agent.name,
+    emoji: agent.emoji,
+    role: agent.role,
+    channel: agent.channel,
+    goal: agent.goal,
+    impactStatement: agent.impactStatement,
+    kras: agent.kras,
+    triggers: agent.triggers.map(t => ({
+      id: t.id,
+      name: t.name,
+      description: t.description,
+      parameters: t.parameters,
+    })),
+  }));
+  res.json(agents);
+});
+
+// Get cost preview for a trigger (before approval)
+app.post('/api/agents/:agentId/triggers/:triggerId/preview', async (req, res) => {
+  const { agentId, triggerId } = req.params;
+  const params = req.body;
+
+  try {
+    const agent = AGENT_PERSONAS[agentId];
+    if (!agent) {
+      return res.status(404).json({ error: `Agent ${agentId} not found` });
+    }
+
+    const trigger = agent.triggers.find(t => t.id === triggerId);
+    if (!trigger) {
+      return res.status(404).json({ error: `Trigger ${triggerId} not found` });
+    }
+
+    const costEstimate = estimateTriggerCost(agentId, triggerId, params);
+
+    // Check API availability
+    const apiStatus: Record<string, boolean> = {
+      anthropic: !!config.ANTHROPIC_API_KEY,
+      apollo: !!config.APOLLO_API_KEY,
+      resend: !!config.RESEND_API_KEY,
+    };
+
+    // Determine if trigger can run
+    const canRun = apiStatus.anthropic; // At minimum need Anthropic
+    const warnings: string[] = [];
+
+    if (trigger.costEstimate.externalApiCostPerUnit > 0 && !apiStatus.apollo) {
+      warnings.push('Apollo API not configured - enrichment will use fallback data');
+    }
+
+    res.json({
+      agent: {
+        id: agent.id,
+        name: agent.name,
+        emoji: agent.emoji,
+      },
+      trigger: {
+        id: trigger.id,
+        name: trigger.name,
+        description: trigger.description,
+      },
+      parameters: params,
+      costEstimate: {
+        anthropicCost: `$${costEstimate.anthropicCost.toFixed(4)}`,
+        externalApiCost: `$${costEstimate.externalApiCost.toFixed(4)}`,
+        totalCost: `$${costEstimate.totalCost.toFixed(4)}`,
+        estimatedTime: `${Math.ceil(costEstimate.estimatedTime / 60)} minutes`,
+        breakdown: costEstimate.breakdown,
+      },
+      apiStatus,
+      canRun,
+      warnings,
+      approvalRequired: true,
+      message: canRun
+        ? `Ready to execute. Estimated cost: $${costEstimate.totalCost.toFixed(4)}`
+        : 'Cannot run - Anthropic API key required',
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Execute a trigger (after approval)
+app.post('/api/agents/:agentId/triggers/:triggerId/execute', async (req, res) => {
+  const { agentId, triggerId } = req.params;
+  const { params, approved } = req.body;
+
+  if (!approved) {
+    return res.status(400).json({
+      error: 'Execution not approved',
+      message: 'Set approved: true in request body to confirm execution',
+    });
+  }
+
+  try {
+    const agent = AGENT_PERSONAS[agentId];
+    if (!agent) {
+      return res.status(404).json({ error: `Agent ${agentId} not found` });
+    }
+
+    const trigger = agent.triggers.find(t => t.id === triggerId);
+    if (!trigger) {
+      return res.status(404).json({ error: `Trigger ${triggerId} not found` });
+    }
+
+    // Calculate cost for logging
+    const costEstimate = estimateTriggerCost(agentId, triggerId, params || {});
+
+    // Create job based on agent and trigger
+    const jobData = {
+      taskId: `trigger_${agentId}_${triggerId}_${Date.now()}`,
+      taskType: triggerId,
+      agentId,
+      triggerId,
+      payload: params || {},
+      priority: 8,
+      estimatedCost: costEstimate.totalCost,
+      createdAt: new Date().toISOString(),
+      approvedAt: new Date().toISOString(),
+    };
+
+    // Map agent to queue
+    const queueMap: Record<string, string> = {
+      lead_research: 'leadResearch',
+      lead_scoring: 'leadScoring',
+      email: 'emailOutreach',
+      linkedin: 'linkedin',
+      content: 'content',
+      orchestrator: 'orchestrator',
+      leader: 'orchestrator',
+      ads: 'content',
+    };
+
+    const queueName = queueMap[agentId] || 'orchestrator';
+    const job = await addJob(queueName, jobData);
+
+    // Log the trigger execution
+    await query(
+      `INSERT INTO agent_tasks (id, agent_type, task_type, status, input_data, created_at)
+       VALUES ($1, $2, $3, 'pending', $4, NOW())`,
+      [jobData.taskId, agentId, triggerId, JSON.stringify(jobData)]
+    ).catch(() => {}); // Ignore if table doesn't exist
+
+    res.json({
+      success: true,
+      jobId: job.id,
+      taskId: jobData.taskId,
+      agent: agent.name,
+      trigger: trigger.name,
+      estimatedCost: `$${costEstimate.totalCost.toFixed(4)}`,
+      estimatedTime: `${Math.ceil(costEstimate.estimatedTime / 60)} minutes`,
+      status: 'queued',
+      message: `${agent.emoji} ${agent.name} is now working on "${trigger.name}"`,
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get pending approvals (jobs waiting for execution)
+app.get('/api/agents/pending-approvals', async (_req, res) => {
+  try {
+    // This could track jobs that are in preview but not yet executed
+    // For now, return empty - in future could use Redis to store previews
+    res.json({
+      pendingApprovals: [],
+      message: 'Use /preview endpoint to generate cost estimates before /execute',
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get cost constants for UI display
+app.get('/api/costs', async (_req, res) => {
+  res.json({
+    constants: COST_CONSTANTS,
+    description: {
+      ANTHROPIC_INPUT_PER_1K: 'Cost per 1,000 input tokens to Claude',
+      ANTHROPIC_OUTPUT_PER_1K: 'Cost per 1,000 output tokens from Claude',
+      APOLLO_PER_ENRICHMENT: 'Cost per contact/company lookup via Apollo',
+      CLEARBIT_PER_LOOKUP: 'Cost per company enrichment via Clearbit',
+      RESEND_PER_EMAIL: 'Cost per email sent via Resend',
+    },
+  });
 });
 
 // Queue stats

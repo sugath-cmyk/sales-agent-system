@@ -8,7 +8,8 @@ import { WeeklyTrend } from './components/WeeklyTrend';
 import { TeamOverview } from './components/TeamOverview';
 import { AgentCard } from './components/AgentCard';
 import { DataView } from './components/DataView';
-import { RefreshCw, Calendar, Users, Target, TrendingUp, Award, Database } from 'lucide-react';
+import { AgentTriggers } from './components/AgentTriggers';
+import { RefreshCw, Calendar, Users, Target, TrendingUp, Award, Database, Zap } from 'lucide-react';
 import { API_BASE } from './config/api';
 
 const API_URL = `${API_BASE}/api`;
@@ -27,7 +28,7 @@ interface Agent {
   emoji: string;
 }
 
-type Tab = 'overview' | 'agents' | 'pipeline' | 'evaluations' | 'data';
+type Tab = 'overview' | 'agents' | 'pipeline' | 'evaluations' | 'control' | 'data';
 
 export default function App() {
   const [overview, setOverview] = useState<Overview | null>(null);
@@ -97,6 +98,7 @@ export default function App() {
     { id: 'agents', label: 'Agents', icon: Users },
     { id: 'pipeline', label: 'Pipeline', icon: TrendingUp },
     { id: 'evaluations', label: 'Evaluations', icon: Award },
+    { id: 'control', label: 'Control', icon: Zap },
     { id: 'data', label: 'Data', icon: Database },
   ] as const;
 
@@ -343,6 +345,22 @@ export default function App() {
                 ))}
               </div>
             </div>
+          </div>
+        )}
+
+        {/* Control Tab - Manual Agent Triggers */}
+        {activeTab === 'control' && (
+          <div className="space-y-6">
+            <div className="bg-gradient-to-r from-purple-600/20 to-blue-600/20 rounded-lg p-6 mb-6">
+              <h2 className="text-xl font-bold flex items-center gap-2 mb-2">
+                <Zap className="w-6 h-6 text-yellow-400" />
+                Agent Control Center
+              </h2>
+              <p className="text-gray-300">
+                Manually trigger agent actions with full cost visibility. Preview estimated costs before approving execution.
+              </p>
+            </div>
+            <AgentTriggers />
           </div>
         )}
 
