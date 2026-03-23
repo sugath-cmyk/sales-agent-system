@@ -622,19 +622,60 @@ router.get('/agents/adman', async (req, res) => {
 // RAW DATA VIEWS
 // =====================
 
+// Helper to build date filter clause
+const buildDateFilter = (startDate: string | undefined, endDate: string | undefined, dateColumn: string, params: unknown[], paramIndex: number): { clause: string; newIndex: number } => {
+  let clause = '';
+  if (startDate) {
+    clause += ` AND ${dateColumn} >= $${paramIndex}`;
+    params.push(startDate);
+    paramIndex++;
+  }
+  if (endDate) {
+    clause += ` AND ${dateColumn} <= $${paramIndex}`;
+    params.push(endDate);
+    paramIndex++;
+  }
+  return { clause, newIndex: paramIndex };
+};
+
 // All companies
 router.get('/data/companies', async (req, res) => {
-  const { limit = 100, offset = 0 } = req.query;
+  const { limit = 100, offset = 0, agent, startDate, endDate } = req.query;
   try {
+    let whereClause = 'WHERE 1=1';
+    const params: unknown[] = [limit, offset];
+    let paramIndex = 3;
+
+    // Agent filter - companies discovered by a specific agent
+    if (agent) {
+      whereClause += ` AND discovered_by = $${paramIndex}`;
+      params.push(agent);
+      paramIndex++;
+    }
+
+    // Date range filter
+    const dateFilter = buildDateFilter(startDate as string, endDate as string, 'created_at', params, paramIndex);
+    whereClause += dateFilter.clause;
+
     const companies = await query(`
       SELECT id, name, domain, platform, region, has_shopping_assistant,
-             monthly_traffic, enriched_at, created_at, updated_at
+             monthly_traffic, enriched_at, created_at, updated_at, discovered_by
       FROM companies
+      ${whereClause}
       ORDER BY created_at DESC
       LIMIT $1 OFFSET $2
-    `, [limit, offset]);
+    `, params);
 
-    const count = await query(`SELECT COUNT(*) as total FROM companies`);
+    // Count with same filters
+    const countParams = params.slice(2);
+    let countWhere = whereClause.replace('WHERE 1=1', 'WHERE 1=1').replace(/\$\d+/g, (match) => {
+      const num = parseInt(match.slice(1));
+      return num > 2 ? `$${num - 2}` : match;
+    });
+    const countQuery = countParams.length > 0
+      ? `SELECT COUNT(*) as total FROM companies ${countWhere}`
+      : `SELECT COUNT(*) as total FROM companies`;
+    const count = await query(countQuery, countParams);
 
     res.json({
       data: companies.rows,
@@ -643,25 +684,40 @@ router.get('/data/companies', async (req, res) => {
       offset: parseInt(offset as string)
     });
   } catch (error) {
+    console.error('Failed to get companies:', error);
     res.status(500).json({ error: 'Failed to get companies' });
   }
 });
 
 // All leads with details
 router.get('/data/leads', async (req, res) => {
-  const { limit = 100, offset = 0, status } = req.query;
+  const { limit = 100, offset = 0, status, agent, startDate, endDate } = req.query;
   try {
-    let whereClause = '';
+    let whereClause = 'WHERE 1=1';
     const params: unknown[] = [limit, offset];
+    let paramIndex = 3;
 
-    if (status) {
-      whereClause = 'WHERE l.status = $3';
+    // Status filter
+    if (status && status !== 'all') {
+      whereClause += ` AND l.status = $${paramIndex}`;
       params.push(status);
+      paramIndex++;
     }
+
+    // Agent filter - leads sourced from a specific agent
+    if (agent && agent !== 'all') {
+      whereClause += ` AND l.source = $${paramIndex}`;
+      params.push(agent);
+      paramIndex++;
+    }
+
+    // Date range filter
+    const dateFilter = buildDateFilter(startDate as string, endDate as string, 'l.created_at', params, paramIndex);
+    whereClause += dateFilter.clause;
 
     const leads = await query(`
       SELECT l.id, l.status, l.source, l.icp_score, l.intent_score, l.total_score,
-             l.created_at, l.stage_changed_at,
+             l.created_at, l.stage_changed_at, l.last_agent,
              c.email, c.first_name, c.last_name, c.title,
              co.name as company_name, co.domain, co.platform
       FROM leads l
@@ -672,7 +728,21 @@ router.get('/data/leads', async (req, res) => {
       LIMIT $1 OFFSET $2
     `, params);
 
-    const count = await query(`SELECT COUNT(*) as total FROM leads`);
+    // Count with same filters (excluding limit/offset)
+    const countParams = params.slice(2);
+    let countWhereClause = whereClause.replace(/\$(\d+)/g, (_, num) => {
+      const n = parseInt(num);
+      return n > 2 ? `$${n - 2}` : `$${n}`;
+    });
+
+    const countQuery = `
+      SELECT COUNT(*) as total
+      FROM leads l
+      JOIN contacts c ON l.contact_id = c.id
+      JOIN companies co ON l.company_id = co.id
+      ${countWhereClause}
+    `;
+    const count = await query(countQuery, countParams);
 
     res.json({
       data: leads.rows,
@@ -681,27 +751,33 @@ router.get('/data/leads', async (req, res) => {
       offset: parseInt(offset as string)
     });
   } catch (error) {
+    console.error('Failed to get leads:', error);
     res.status(500).json({ error: 'Failed to get leads' });
   }
 });
 
 // All agent tasks
 router.get('/data/tasks', async (req, res) => {
-  const { limit = 100, offset = 0, agent, status } = req.query;
+  const { limit = 100, offset = 0, agent, status, startDate, endDate } = req.query;
   try {
     let whereClause = 'WHERE 1=1';
     const params: unknown[] = [limit, offset];
     let paramIndex = 3;
 
-    if (agent) {
+    if (agent && agent !== 'all') {
       whereClause += ` AND agent_type = $${paramIndex}`;
       params.push(agent);
       paramIndex++;
     }
-    if (status) {
+    if (status && status !== 'all') {
       whereClause += ` AND status = $${paramIndex}`;
       params.push(status);
+      paramIndex++;
     }
+
+    // Date range filter
+    const dateFilter = buildDateFilter(startDate as string, endDate as string, 'created_at', params, paramIndex);
+    whereClause += dateFilter.clause;
 
     const tasks = await query(`
       SELECT id, agent_type, task_type, payload, result, error, status,
@@ -712,7 +788,14 @@ router.get('/data/tasks', async (req, res) => {
       LIMIT $1 OFFSET $2
     `, params);
 
-    const count = await query(`SELECT COUNT(*) as total FROM agent_tasks`);
+    // Count with same filters
+    const countParams = params.slice(2);
+    let countWhereClause = whereClause.replace(/\$(\d+)/g, (_, num) => {
+      const n = parseInt(num);
+      return n > 2 ? `$${n - 2}` : `$${n}`;
+    });
+    const countQuery = `SELECT COUNT(*) as total FROM agent_tasks ${countWhereClause}`;
+    const count = await query(countQuery, countParams);
 
     res.json({
       data: tasks.rows,
@@ -721,7 +804,72 @@ router.get('/data/tasks', async (req, res) => {
       offset: parseInt(offset as string)
     });
   } catch (error) {
+    console.error('Failed to get tasks:', error);
     res.status(500).json({ error: 'Failed to get tasks' });
+  }
+});
+
+// Activity log - unified view of all agent actions
+router.get('/data/activity', async (req, res) => {
+  const { limit = 100, offset = 0, agent, startDate, endDate } = req.query;
+  try {
+    let whereClause = 'WHERE 1=1';
+    const params: unknown[] = [limit, offset];
+    let paramIndex = 3;
+
+    if (agent && agent !== 'all') {
+      whereClause += ` AND agent_type = $${paramIndex}`;
+      params.push(agent);
+      paramIndex++;
+    }
+
+    // Date range filter
+    const dateFilter = buildDateFilter(startDate as string, endDate as string, 'created_at', params, paramIndex);
+    whereClause += dateFilter.clause;
+
+    const activities = await query(`
+      SELECT
+        id,
+        agent_type as agent,
+        event_type as action,
+        COALESCE(
+          properties->>'lead_name',
+          properties->>'company_name',
+          properties->>'target',
+          'System'
+        ) as target,
+        COALESCE(
+          properties->>'details',
+          properties->>'message',
+          properties->>'description',
+          ''
+        ) as details,
+        COALESCE(properties->>'status', 'completed') as status,
+        created_at
+      FROM analytics_events
+      ${whereClause}
+      ORDER BY created_at DESC
+      LIMIT $1 OFFSET $2
+    `, params);
+
+    // Count with same filters
+    const countParams = params.slice(2);
+    let countWhereClause = whereClause.replace(/\$(\d+)/g, (_, num) => {
+      const n = parseInt(num);
+      return n > 2 ? `$${n - 2}` : `$${n}`;
+    });
+    const countQuery = `SELECT COUNT(*) as total FROM analytics_events ${countWhereClause}`;
+    const count = await query(countQuery, countParams);
+
+    res.json({
+      data: activities.rows,
+      total: parseInt(count.rows[0].total),
+      limit: parseInt(limit as string),
+      offset: parseInt(offset as string)
+    });
+  } catch (error) {
+    console.error('Failed to get activity:', error);
+    res.status(500).json({ error: 'Failed to get activity' });
   }
 });
 

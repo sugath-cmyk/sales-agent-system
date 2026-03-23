@@ -261,6 +261,17 @@ const runMigration = async (_req: any, res: any) => {
       )
     `);
 
+    // Add new columns for agent tracking (if they don't exist)
+    await query(`
+      ALTER TABLE companies
+      ADD COLUMN IF NOT EXISTS discovered_by VARCHAR(50)
+    `).catch(() => {}); // Ignore error if column exists
+
+    await query(`
+      ALTER TABLE leads
+      ADD COLUMN IF NOT EXISTS last_agent VARCHAR(50)
+    `).catch(() => {}); // Ignore error if column exists
+
     res.json({
       success: true,
       message: 'Database tables created successfully!',
