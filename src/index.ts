@@ -414,6 +414,33 @@ app.delete('/api/data/clear-test', async (_req, res) => {
   }
 });
 
+// Clear ALL data (nuclear option)
+app.delete('/api/data/clear-all', async (_req, res) => {
+  try {
+    // Delete in order respecting foreign keys
+    const deleted = {
+      analytics_events: (await query(`DELETE FROM analytics_events RETURNING id`)).rowCount,
+      agent_tasks: (await query(`DELETE FROM agent_tasks RETURNING id`)).rowCount,
+      email_logs: (await query(`DELETE FROM email_logs RETURNING id`)).rowCount,
+      email_sequences: (await query(`DELETE FROM email_sequences RETURNING id`)).rowCount,
+      email_campaigns: (await query(`DELETE FROM email_campaigns RETURNING id`)).rowCount,
+      linkedin_campaigns: (await query(`DELETE FROM linkedin_campaigns RETURNING id`)).rowCount,
+      content_pieces: (await query(`DELETE FROM content_pieces RETURNING id`)).rowCount,
+      leads: (await query(`DELETE FROM leads RETURNING id`)).rowCount,
+      contacts: (await query(`DELETE FROM contacts RETURNING id`)).rowCount,
+      companies: (await query(`DELETE FROM companies RETURNING id`)).rowCount,
+    };
+
+    res.json({
+      success: true,
+      message: 'All data cleared - fresh start!',
+      deleted
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Re-enrich companies with real Apollo data
 app.post('/api/enrich/companies', async (req, res) => {
   if (!config.APOLLO_API_KEY) {
