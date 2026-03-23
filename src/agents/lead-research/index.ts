@@ -4,6 +4,7 @@ import { query } from '../../db/client.js';
 import { scanStore, StoreAnalysis } from './store-scanner.js';
 import { detectPlatform, PlatformInfo } from './tech-detector.js';
 import { enrichCompany, enrichContact, EnrichmentData } from './enricher.js';
+import { discoverShopifyStores, getAvailableCategories } from '../../services/store-discovery.js';
 
 const SYSTEM_PROMPT = `You are a Lead Research Agent specialized in finding and analyzing D2C e-commerce stores.
 
@@ -222,122 +223,64 @@ export class LeadResearchAgent extends BaseAgent {
     category?: string,
     region?: string
   ): Promise<string> {
-    // Curated list of D2C Shopify stores by category (real stores without shopping assistants)
-    const storesByCategory: Record<string, string[]> = {
-      fashion: [
-        'revolve.com', 'fashionnova.com', 'prettylittlething.com', 'boohoo.com',
-        'princess-polly.com', 'showpo.com', 'beginningboutique.com.au', 'hellomolly.com',
-        'whitefoxboutique.com', 'tigermist.com.au', 'thefryecompany.com', 'aninebing.com',
-        'lackofcolor.com', 'meshki.com.au', 'thirdlove.com', 'everlane.com',
-        'rothys.com', 'nisolo.com', 'kotn.com', 'storfrench.com'
-      ],
-      beauty: [
-        'kylieskin.com', 'fentybeauty.com', 'illamasqua.com', 'hudabeauty.com',
-        'morphe.com', 'ofracosmetics.com', 'sugarbearhair.com', 'kopari.com',
-        'summerfridays.com', 'cocokind.com', 'herbivorebotanicals.com', 'drunkelephant.com',
-        'tatcha.com', 'supergoop.com', 'ilia.com', 'violetgrey.com',
-        'soko-glam.com', 'peachandlily.com', 'blissworld.com', 'olehenriksen.com'
-      ],
-      fitness: [
-        'alphalete.com', 'youngla.com', 'setactive.co', 'bufbunny.com',
-        'vitality.co.uk', 'ptula.com', 'womensbestshop.com', 'balanceathletica.com',
-        'lskd.co', 'echt.com.au', '1stphorm.com', 'ghostlifestyle.com',
-        'bearfootshoes.com', 'vuoriclothing.com', 'tentree.com', 'aloyoga.com',
-        'outdoorvoices.com', 'girlfriend.com', 'bandier.com', 'carbon38.com'
-      ],
-      home: [
-        'burrow.com', 'article.com', 'joybird.com', 'insideweather.com',
-        'floydhome.com', 'interiordefine.com', 'campaignliving.com', 'maiden-home.com',
-        'parachutehome.com', 'brooklinen.com', 'boll-branch.com', 'cozyearth.com',
-        'tuftandneedle.com', 'bearaby.com', 'casper.com', 'helix-sleep.com',
-        'saatva.com', 'purple.com', 'leesa.com', 'nectarsleep.com'
-      ],
-      food: [
-        'magicspoon.com', 'rxbar.com', 'perfectsnacks.com', 'athleanx.com',
-        'huel.com', 'soylent.com', 'onnit.com', 'transparentlabs.com',
-        'truvani.com', 'drinklmnt.com', 'liquidiv.com', 'mudwtr.com',
-        'foursigmatic.com', 'athleticgreens.com', 'pressedjuicery.com', 'dailyharvest.com',
-        'thrivemarket.com', 'butcherbox.com', 'crowdcow.com', 'wildgrain.com'
-      ],
-      pets: [
-        'barkbox.com', 'chewy.com', 'petplate.com', 'thefarmersdog.com',
-        'ollie.com', 'sundays-for-dogs.com', 'jinx.com', 'wildearth.com',
-        'openfarmpet.com', 'stellaandchewys.com', 'weruva.com', 'ziwi.com',
-        'furchild.com', 'petcubes.com', 'scratchpet.com', 'lyka.com.au',
-        'pawdiet.com', 'nom-nom.com', 'spotandtango.com', 'cozypetshop.com'
-      ],
-      tech: [
-        'peakdesign.com', 'nomadgoods.com', 'bellroy.com', 'moment.co',
-        'quadlockcase.com', 'casetify.com', 'dbrand.com', 'mous.co',
-        'bandolier.com', 'loopy.com', 'pela.earth', 'incase.com',
-        'twelve-south.com', 'native-union.com', 'elago.com', 'satechi.net',
-        'anker.com', 'ravpower.com', 'aukey.com', 'hyper-shop.com'
-      ],
-      general: [
-        'glossier.com', 'allbirds.com', 'bombas.com', 'mvmt.com', 'chubbies.com',
-        'meundies.com', 'untuckit.com', 'huckberry.com', 'marinelayer.com',
-        'taylorstitch.com', 'publicrec.com', 'tracksmith.com', 'janji.com',
-        'greats.com', 'koio.co', 'oliver-cabell.com', 'beckett-simonon.com',
-        'mack-weldon.com', 'cuts.clothing', 'rhone.com'
-      ]
-    };
+    try {
+      // Get existing domains to exclude
+      const existingResult = await query(`SELECT domain FROM companies`);
+      const excludeDomains = existingResult.rows.map(r => r.domain);
 
-    // Get stores from requested category or general
-    const categoryKey = category?.toLowerCase() || 'general';
-    let availableStores = storesByCategory[categoryKey] || storesByCategory.general;
+      // Use the discovery service
+      const discovery = await discoverShopifyStores(count, {
+        category,
+        region,
+        excludeDomains
+      });
 
-    // Filter by region if specified (check existing data in DB)
-    if (region && region !== 'ALL') {
-      // For now, just shuffle and take from list - region filtering would need enrichment
-      availableStores = availableStores.sort(() => Math.random() - 0.5);
-    }
+      if (discovery.stores.length === 0) {
+        // All stores researched, check for stale ones
+        const staleResult = await query(
+          `SELECT domain FROM companies
+           WHERE enriched_at IS NULL OR enriched_at < NOW() - INTERVAL '30 days'
+           ORDER BY RANDOM()
+           LIMIT $1`,
+          [count]
+        );
 
-    // Check which stores we haven't researched yet
-    const existingResult = await query(
-      `SELECT domain FROM companies WHERE domain = ANY($1)`,
-      [availableStores]
-    );
-    const existingDomains = new Set(existingResult.rows.map(r => r.domain));
+        if (staleResult.rows.length > 0) {
+          return JSON.stringify({
+            message: 'All new stores researched. Here are some that need re-research:',
+            domains: staleResult.rows.map(r => r.domain),
+            count: staleResult.rows.length,
+            note: 'These stores were researched over 30 days ago',
+            availableCategories: getAvailableCategories()
+          }, null, 2);
+        }
 
-    // Filter to new stores
-    const newStores = availableStores.filter(d => !existingDomains.has(d));
-    const selectedStores = newStores.slice(0, Math.min(count, newStores.length));
-
-    if (selectedStores.length === 0) {
-      // If all are researched, return some for re-research
-      const staleResult = await query(
-        `SELECT domain FROM companies
-         WHERE domain = ANY($1)
-         AND (enriched_at IS NULL OR enriched_at < NOW() - INTERVAL '30 days')
-         LIMIT $2`,
-        [availableStores, count]
-      );
-
-      if (staleResult.rows.length > 0) {
         return JSON.stringify({
-          message: 'All stores previously researched. Here are some that may need re-research:',
-          domains: staleResult.rows.map(r => r.domain),
-          count: staleResult.rows.length,
-          category: categoryKey,
-          note: 'These stores were researched over 30 days ago'
+          message: 'All stores in database have been recently researched',
+          suggestion: 'Try providing specific domains to research',
+          availableCategories: getAvailableCategories(),
+          totalInDatabase: discovery.totalAvailable
         }, null, 2);
       }
 
       return JSON.stringify({
-        message: 'All stores in this category have been recently researched',
-        suggestion: 'Try a different category or provide specific domains to research',
-        availableCategories: Object.keys(storesByCategory)
+        message: `Found ${discovery.stores.length} new Shopify stores to research`,
+        domains: discovery.stores.map(s => s.domain),
+        stores: discovery.stores,
+        count: discovery.stores.length,
+        category: category || 'mixed',
+        region: region || 'ALL',
+        source: discovery.source,
+        totalAvailable: discovery.totalAvailable,
+        instruction: 'For each domain: 1) scan_store to check for shopping assistant, 2) If no assistant, enrich_company and enrich_contact, 3) save_company, save_contact, create_lead'
+      }, null, 2);
+    } catch (error) {
+      return JSON.stringify({
+        error: `Failed to discover stores: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        suggestion: 'Try providing specific domains instead',
+        availableCategories: getAvailableCategories()
       }, null, 2);
     }
-
-    return JSON.stringify({
-      message: `Found ${selectedStores.length} new Shopify stores to research`,
-      domains: selectedStores,
-      count: selectedStores.length,
-      category: categoryKey,
-      region: region || 'ALL',
-      instruction: 'For each domain, scan the store and create leads for qualified ones'
-    }, null, 2);
   }
 
   private async handleScanStore(domain: string): Promise<string> {
