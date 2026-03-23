@@ -545,10 +545,39 @@ app.post('/api/agents/:agentId/triggers/:triggerId/preview', async (req, res) =>
   }
 });
 
+// Direct execution helper - runs agent without Redis queue
+async function executeAgentDirectly(agentId: string, triggerId: string, params: Record<string, unknown>): Promise<{ success: boolean; result?: unknown; error?: string }> {
+  const agentMap: Record<string, any> = {
+    lead_research: leadResearchAgent,
+    lead_scoring: leadScoringAgent,
+    email: emailAgent,
+    linkedin: linkedInAgent,
+    content: contentAgent,
+    orchestrator: orchestratorAgent,
+    leader: leaderAgent,
+  };
+
+  const agent = agentMap[agentId];
+  if (!agent) {
+    return { success: false, error: `Agent ${agentId} not implemented` };
+  }
+
+  try {
+    // Call agent's run method with the trigger action
+    const result = await agent.run({
+      action: triggerId,
+      ...params,
+    });
+    return { success: true, result };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+}
+
 // Execute a trigger (after approval)
 app.post('/api/agents/:agentId/triggers/:triggerId/execute', async (req, res) => {
   const { agentId, triggerId } = req.params;
-  const { params, approved } = req.body;
+  const { params, approved, direct } = req.body;
 
   if (!approved) {
     return res.status(400).json({
@@ -571,52 +600,123 @@ app.post('/api/agents/:agentId/triggers/:triggerId/execute', async (req, res) =>
     // Calculate cost for logging
     const costEstimate = estimateTriggerCost(agentId, triggerId, params || {});
 
-    // Create job based on agent and trigger
-    const jobData = {
-      taskId: `trigger_${agentId}_${triggerId}_${Date.now()}`,
-      taskType: triggerId,
-      agentId,
-      triggerId,
-      payload: params || {},
-      priority: 8,
-      estimatedCost: costEstimate.totalCost,
-      createdAt: new Date().toISOString(),
-      approvedAt: new Date().toISOString(),
-    };
+    const taskId = `trigger_${agentId}_${triggerId}_${Date.now()}`;
 
-    // Map agent to queue
-    const queueMap: Record<string, string> = {
-      lead_research: 'leadResearch',
-      lead_scoring: 'leadScoring',
-      email: 'emailOutreach',
-      linkedin: 'linkedin',
-      content: 'content',
-      orchestrator: 'orchestrator',
-      leader: 'orchestrator',
-      ads: 'content',
-    };
-
-    const queueName = queueMap[agentId] || 'orchestrator';
-    const job = await addJob(queueName, jobData);
-
-    // Log the trigger execution
+    // Log the trigger execution to database
     await query(
-      `INSERT INTO agent_tasks (id, agent_type, task_type, status, input_data, created_at)
-       VALUES ($1, $2, $3, 'pending', $4, NOW())`,
-      [jobData.taskId, agentId, triggerId, JSON.stringify(jobData)]
-    ).catch(() => {}); // Ignore if table doesn't exist
+      `INSERT INTO agent_tasks (agent_type, task_type, status, payload, created_at)
+       VALUES ($1, $2, 'processing', $3, NOW())
+       RETURNING id`,
+      [agentId, triggerId, JSON.stringify(params || {})]
+    ).catch(() => {});
 
-    res.json({
-      success: true,
-      jobId: job.id,
-      taskId: jobData.taskId,
-      agent: agent.name,
-      trigger: trigger.name,
-      estimatedCost: `$${costEstimate.totalCost.toFixed(4)}`,
-      estimatedTime: `${Math.ceil(costEstimate.estimatedTime / 60)} minutes`,
-      status: 'queued',
-      message: `${agent.emoji} ${agent.name} is now working on "${trigger.name}"`,
-    });
+    // Try direct execution first (bypasses Redis)
+    let executionMode = 'direct';
+    let jobId = null;
+    let executionResult = null;
+
+    if (direct !== false) {
+      // Direct execution - run agent immediately
+      console.log(`[DIRECT] Executing ${agent.name} - ${trigger.name}`);
+      executionResult = await executeAgentDirectly(agentId, triggerId, params || {});
+
+      if (executionResult.success) {
+        // Update task status
+        await query(
+          `UPDATE agent_tasks SET status = 'completed', result = $1, completed_at = NOW()
+           WHERE agent_type = $2 AND task_type = $3 AND status = 'processing'
+           ORDER BY created_at DESC LIMIT 1`,
+          [JSON.stringify(executionResult.result), agentId, triggerId]
+        ).catch(() => {});
+
+        // Log analytics event
+        await query(
+          `INSERT INTO analytics_events (event_type, agent_type, properties, created_at)
+           VALUES ($1, $2, $3, NOW())`,
+          ['trigger_executed', agentId, JSON.stringify({
+            trigger: triggerId,
+            params,
+            cost: costEstimate.totalCost,
+            mode: 'direct',
+          })]
+        ).catch(() => {});
+
+        return res.json({
+          success: true,
+          taskId,
+          agent: agent.name,
+          trigger: trigger.name,
+          estimatedCost: `$${costEstimate.totalCost.toFixed(4)}`,
+          status: 'completed',
+          mode: 'direct',
+          result: executionResult.result,
+          message: `${agent.emoji} ${agent.name} completed "${trigger.name}" successfully!`,
+        });
+      }
+    }
+
+    // Fallback to queue (if direct execution failed or was disabled)
+    try {
+      const jobData = {
+        taskId,
+        taskType: triggerId,
+        agentId,
+        triggerId,
+        payload: params || {},
+        priority: 8,
+        estimatedCost: costEstimate.totalCost,
+        createdAt: new Date().toISOString(),
+        approvedAt: new Date().toISOString(),
+      };
+
+      const queueMap: Record<string, string> = {
+        lead_research: 'leadResearch',
+        lead_scoring: 'leadScoring',
+        email: 'email',
+        linkedin: 'linkedin',
+        content: 'content',
+        orchestrator: 'orchestrator',
+        leader: 'leader',
+        ads: 'ads',
+      };
+
+      const queueName = queueMap[agentId] || 'orchestrator';
+      const job = await addJob(queueName as any, jobData);
+      jobId = job.id;
+      executionMode = 'queued';
+
+      res.json({
+        success: true,
+        jobId,
+        taskId,
+        agent: agent.name,
+        trigger: trigger.name,
+        estimatedCost: `$${costEstimate.totalCost.toFixed(4)}`,
+        estimatedTime: `${Math.ceil(costEstimate.estimatedTime / 60)} minutes`,
+        status: 'queued',
+        mode: 'queued',
+        message: `${agent.emoji} ${agent.name} is now working on "${trigger.name}"`,
+      });
+    } catch (queueError: any) {
+      // Both direct and queue failed
+      const errorMsg = queueError.message || 'Unknown error';
+
+      if (errorMsg.includes('max requests limit')) {
+        return res.status(503).json({
+          success: false,
+          error: 'Redis queue limit exceeded',
+          directError: executionResult?.error,
+          message: 'Both direct execution and queue are unavailable. Please try again later or upgrade Redis.',
+          suggestion: 'The Upstash Redis free tier limit has been reached. Consider upgrading or using Render Redis.',
+        });
+      }
+
+      return res.status(500).json({
+        success: false,
+        error: errorMsg,
+        directError: executionResult?.error,
+      });
+    }
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
