@@ -563,12 +563,19 @@ async function executeAgentDirectly(agentId: string, triggerId: string, params: 
   }
 
   try {
-    // Call agent's run method with the trigger action
-    const result = await agent.run({
-      action: triggerId,
-      ...params,
-    });
-    return { success: true, result };
+    // Create task context for the agent
+    const taskContext = {
+      taskId: `direct_${agentId}_${triggerId}_${Date.now()}`,
+      payload: {
+        action: triggerId,
+        ...params,
+      },
+      retryCount: 0,
+    };
+
+    // Call agent's processTask method
+    const result = await agent.processTask(taskContext);
+    return { success: result.success, result: result.data, error: result.error };
   } catch (error: any) {
     return { success: false, error: error.message };
   }
