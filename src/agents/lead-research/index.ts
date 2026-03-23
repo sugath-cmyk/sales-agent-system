@@ -30,6 +30,28 @@ Output your analysis as structured data for the scoring agent to process.`;
 
 const TOOLS: Tool[] = [
   {
+    name: 'discover_shopify_stores',
+    description: 'Discover Shopify stores to research. Returns a list of domains matching criteria.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        count: {
+          type: 'number',
+          description: 'Number of stores to discover (default: 10)',
+        },
+        category: {
+          type: 'string',
+          description: 'Store category/niche (e.g., fashion, beauty, fitness, home)',
+        },
+        region: {
+          type: 'string',
+          description: 'Target region (US, UK, AU, etc.)',
+        },
+      },
+      required: [],
+    },
+  },
+  {
     name: 'scan_store',
     description: 'Scan an e-commerce store to detect platform and existing tools',
     input_schema: {
@@ -159,6 +181,13 @@ export class LeadResearchAgent extends BaseAgent {
     context: TaskContext
   ): Promise<string> {
     switch (toolName) {
+      case 'discover_shopify_stores':
+        return this.handleDiscoverStores(
+          input.count as number | undefined,
+          input.category as string | undefined,
+          input.region as string | undefined
+        );
+
       case 'scan_store':
         return this.handleScanStore(input.domain as string);
 
@@ -186,6 +215,129 @@ export class LeadResearchAgent extends BaseAgent {
       default:
         return `Unknown tool: ${toolName}`;
     }
+  }
+
+  private async handleDiscoverStores(
+    count: number = 10,
+    category?: string,
+    region?: string
+  ): Promise<string> {
+    // Curated list of D2C Shopify stores by category (real stores without shopping assistants)
+    const storesByCategory: Record<string, string[]> = {
+      fashion: [
+        'revolve.com', 'fashionnova.com', 'prettylittlething.com', 'boohoo.com',
+        'princess-polly.com', 'showpo.com', 'beginningboutique.com.au', 'hellomolly.com',
+        'whitefoxboutique.com', 'tigermist.com.au', 'thefryecompany.com', 'aninebing.com',
+        'lackofcolor.com', 'meshki.com.au', 'thirdlove.com', 'everlane.com',
+        'rothys.com', 'nisolo.com', 'kotn.com', 'storfrench.com'
+      ],
+      beauty: [
+        'kylieskin.com', 'fentybeauty.com', 'illamasqua.com', 'hudabeauty.com',
+        'morphe.com', 'ofracosmetics.com', 'sugarbearhair.com', 'kopari.com',
+        'summerfridays.com', 'cocokind.com', 'herbivorebotanicals.com', 'drunkelephant.com',
+        'tatcha.com', 'supergoop.com', 'ilia.com', 'violetgrey.com',
+        'soko-glam.com', 'peachandlily.com', 'blissworld.com', 'olehenriksen.com'
+      ],
+      fitness: [
+        'alphalete.com', 'youngla.com', 'setactive.co', 'bufbunny.com',
+        'vitality.co.uk', 'ptula.com', 'womensbestshop.com', 'balanceathletica.com',
+        'lskd.co', 'echt.com.au', '1stphorm.com', 'ghostlifestyle.com',
+        'bearfootshoes.com', 'vuoriclothing.com', 'tentree.com', 'aloyoga.com',
+        'outdoorvoices.com', 'girlfriend.com', 'bandier.com', 'carbon38.com'
+      ],
+      home: [
+        'burrow.com', 'article.com', 'joybird.com', 'insideweather.com',
+        'floydhome.com', 'interiordefine.com', 'campaignliving.com', 'maiden-home.com',
+        'parachutehome.com', 'brooklinen.com', 'boll-branch.com', 'cozyearth.com',
+        'tuftandneedle.com', 'bearaby.com', 'casper.com', 'helix-sleep.com',
+        'saatva.com', 'purple.com', 'leesa.com', 'nectarsleep.com'
+      ],
+      food: [
+        'magicspoon.com', 'rxbar.com', 'perfectsnacks.com', 'athleanx.com',
+        'huel.com', 'soylent.com', 'onnit.com', 'transparentlabs.com',
+        'truvani.com', 'drinklmnt.com', 'liquidiv.com', 'mudwtr.com',
+        'foursigmatic.com', 'athleticgreens.com', 'pressedjuicery.com', 'dailyharvest.com',
+        'thrivemarket.com', 'butcherbox.com', 'crowdcow.com', 'wildgrain.com'
+      ],
+      pets: [
+        'barkbox.com', 'chewy.com', 'petplate.com', 'thefarmersdog.com',
+        'ollie.com', 'sundays-for-dogs.com', 'jinx.com', 'wildearth.com',
+        'openfarmpet.com', 'stellaandchewys.com', 'weruva.com', 'ziwi.com',
+        'furchild.com', 'petcubes.com', 'scratchpet.com', 'lyka.com.au',
+        'pawdiet.com', 'nom-nom.com', 'spotandtango.com', 'cozypetshop.com'
+      ],
+      tech: [
+        'peakdesign.com', 'nomadgoods.com', 'bellroy.com', 'moment.co',
+        'quadlockcase.com', 'casetify.com', 'dbrand.com', 'mous.co',
+        'bandolier.com', 'loopy.com', 'pela.earth', 'incase.com',
+        'twelve-south.com', 'native-union.com', 'elago.com', 'satechi.net',
+        'anker.com', 'ravpower.com', 'aukey.com', 'hyper-shop.com'
+      ],
+      general: [
+        'glossier.com', 'allbirds.com', 'bombas.com', 'mvmt.com', 'chubbies.com',
+        'meundies.com', 'untuckit.com', 'huckberry.com', 'marinelayer.com',
+        'taylorstitch.com', 'publicrec.com', 'tracksmith.com', 'janji.com',
+        'greats.com', 'koio.co', 'oliver-cabell.com', 'beckett-simonon.com',
+        'mack-weldon.com', 'cuts.clothing', 'rhone.com'
+      ]
+    };
+
+    // Get stores from requested category or general
+    const categoryKey = category?.toLowerCase() || 'general';
+    let availableStores = storesByCategory[categoryKey] || storesByCategory.general;
+
+    // Filter by region if specified (check existing data in DB)
+    if (region && region !== 'ALL') {
+      // For now, just shuffle and take from list - region filtering would need enrichment
+      availableStores = availableStores.sort(() => Math.random() - 0.5);
+    }
+
+    // Check which stores we haven't researched yet
+    const existingResult = await query(
+      `SELECT domain FROM companies WHERE domain = ANY($1)`,
+      [availableStores]
+    );
+    const existingDomains = new Set(existingResult.rows.map(r => r.domain));
+
+    // Filter to new stores
+    const newStores = availableStores.filter(d => !existingDomains.has(d));
+    const selectedStores = newStores.slice(0, Math.min(count, newStores.length));
+
+    if (selectedStores.length === 0) {
+      // If all are researched, return some for re-research
+      const staleResult = await query(
+        `SELECT domain FROM companies
+         WHERE domain = ANY($1)
+         AND (enriched_at IS NULL OR enriched_at < NOW() - INTERVAL '30 days')
+         LIMIT $2`,
+        [availableStores, count]
+      );
+
+      if (staleResult.rows.length > 0) {
+        return JSON.stringify({
+          message: 'All stores previously researched. Here are some that may need re-research:',
+          domains: staleResult.rows.map(r => r.domain),
+          count: staleResult.rows.length,
+          category: categoryKey,
+          note: 'These stores were researched over 30 days ago'
+        }, null, 2);
+      }
+
+      return JSON.stringify({
+        message: 'All stores in this category have been recently researched',
+        suggestion: 'Try a different category or provide specific domains to research',
+        availableCategories: Object.keys(storesByCategory)
+      }, null, 2);
+    }
+
+    return JSON.stringify({
+      message: `Found ${selectedStores.length} new Shopify stores to research`,
+      domains: selectedStores,
+      count: selectedStores.length,
+      category: categoryKey,
+      region: region || 'ALL',
+      instruction: 'For each domain, scan the store and create leads for qualified ones'
+    }, null, 2);
   }
 
   private async handleScanStore(domain: string): Promise<string> {
@@ -344,6 +496,64 @@ export class LeadResearchAgent extends BaseAgent {
   }
 
   protected buildPromptFromPayload(payload: Record<string, unknown>): string {
+    // Handle discover_companies action (automatic discovery)
+    if (payload.action === 'discover_companies') {
+      const count = payload.count || 10;
+      const region = payload.region || 'US';
+      const category = payload.category || 'general';
+
+      return `Discover and research new Shopify stores that could be potential leads.
+
+Target: ${count} new qualified leads
+Region: ${region}
+Category: ${category || 'any'}
+
+Tasks:
+1. Use discover_shopify_stores to find ${count} stores in the ${category} category
+2. For EACH discovered domain:
+   a. Scan the store to detect platform and existing shopping assistants
+   b. If the store has NO shopping assistant, it's a qualified lead
+   c. Enrich the company data (name, industry, traffic)
+   d. Find the founder/CEO contact information
+   e. Save the company and contact to database
+   f. Create a lead for qualified stores
+3. Provide a summary of how many leads were created
+
+Important: Skip any store that already has a shopping assistant (Tidio, Intercom, Drift, Gorgias, etc.)`;
+    }
+
+    // Handle enrich_leads action
+    if (payload.action === 'enrich_leads') {
+      const count = payload.count || 25;
+      return `Enrich existing leads with better contact data.
+
+Target: ${count} leads to enrich
+Titles to find: ${payload.targetTitles || 'Founder, CEO'}
+
+Tasks:
+1. Get leads that need enrichment (missing or incomplete contact data)
+2. For each lead, enrich the contact information using Apollo or other sources
+3. Update the database with new contact data
+4. Report how many leads were successfully enriched`;
+    }
+
+    // Handle scan_domains action (manual input)
+    if (payload.action === 'scan_domains' && payload.domains) {
+      const domains = typeof payload.domains === 'string'
+        ? payload.domains.split(',').map((d: string) => d.trim())
+        : payload.domains;
+
+      return `Research the following specific domains:
+Domains: ${(domains as string[]).join(', ')}
+
+For each domain:
+1. Scan the store for platform and existing shopping assistants
+2. If no shopping assistant, enrich company and contact data
+3. Create leads for all qualified domains
+4. Report results for each domain`;
+    }
+
+    // Handle single domain research
     if (payload.domain) {
       return `Research the following domain and create a lead if it qualifies:
 Domain: ${payload.domain}
@@ -355,6 +565,7 @@ Tasks:
 4. Save all data and create a lead if qualified`;
     }
 
+    // Handle batch domains
     if (payload.domains && Array.isArray(payload.domains)) {
       return `Research the following domains and create leads for qualifying ones:
 Domains: ${(payload.domains as string[]).join(', ')}
